@@ -1,0 +1,252 @@
+definitions:
+  instance_mac_mini: &instance_mac_mini
+    instance_type: mac_mini_m1
+    max_build_duration: 15
+  env_versions: &env_versions
+    flutter: v3.7.12
+    xcode: 14.2
+    cocoapods: default
+  scripts:
+    - &set_up_code_signing
+      name: Enable code signing on Xcode
+      script: |
+        xcode-project use-profiles
+
+workflows:
+  alpha-workflow:
+    name: iOS Alpha Workflow
+    << : *instance_mac_mini
+    integrations:
+      app_store_connect: codemagic-api-key-tech-mobile
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: '*-alpha*'
+          include: true
+        - pattern: '*-ALPHA*'
+          include: true
+      cancel_previous_builds: false
+    environment:
+      groups:
+        - firebase_credentials
+        - repository
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: in.yocket.alpha
+      << : *env_versions
+    cache:
+      cache_paths:
+        - $FLUTTER_ROOT/.pub-cache
+        - $HOME/Library/Developer/Xcode/DerivedData
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - *set_up_code_signing
+      - name: Version Update
+        script: |
+          #!/usr/bin/env bash
+          set -e # exit on first failed command
+          set -x # print all executed commands to the log
+
+          echo $CM_BRANCH
+          git status
+          git stash
+
+          git remote -v
+          git fetch origin
+          git fetch --all --tags --prune
+
+          ref="+refs/heads/version-alpha:refs/remotes/origin/version-alpha"
+          git config remote.origin.fetch $ref
+          git fetch -a
+          git checkout version-alpha
+
+          git pull origin version-alpha --no-rebase
+          vkey="version"
+          vsubstitute='s/version\(.*\):.//'
+          version=$(cat pubspec.yaml | grep "^$vkey. " | sed -e $vsubstitute)
+          echo $version
+
+          git checkout tags/$CM_TAG -b build/alpha-version
+          git stash pop
+          sed -i '' "s/version: .*/version: ${version}/" pubspec.yaml
+      - name: Build IPA
+        script: |
+          flutter build ipa --release --export-options-plist /Users/builder/export_options.plist --flavor alpha -t lib/main_alpha.dart --dart-define USEREXPERIOR_KEY=11be1464-7ef9-41f6-8f1d-c41a862983ae
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+    publishing:
+      firebase:
+        firebase_token: $FIREBASE_TOKEN
+        ios:
+          app_id: $FIREBASE_ALPHA_IOS_APP_ID
+          groups:
+            - mobile-team
+            - qa-team
+            - design-team
+            - web-team
+            - product
+            - managers
+      email:
+        recipients:
+          - tech-mobile@yocket.in
+        notify:
+          success: true
+          failure: true
+
+  beta-workflow:
+    name: iOS Beta Workflow
+    << : *instance_mac_mini
+    integrations:
+      app_store_connect: codemagic-api-key-tech-mobile
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: '*-beta*'
+          include: true
+        - pattern: '*-BETA*'
+          include: true
+      cancel_previous_builds: false
+    environment:
+      groups:
+        - firebase_credentials
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: in.yocket.beta
+      << : *env_versions
+    cache:
+      cache_paths:
+        - $FLUTTER_ROOT/.pub-cache
+        - $HOME/Library/Developer/Xcode/DerivedData
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - *set_up_code_signing
+      - name: Version Update
+        script: |
+          #!/usr/bin/env bash
+          set -e # exit on first failed command
+          set -x # print all executed commands to the log
+
+          echo $CM_BRANCH
+          git status
+          git stash
+
+          git remote -v
+          git fetch origin
+          git fetch --all --tags --prune
+
+          ref="+refs/heads/version-beta:refs/remotes/origin/version-beta"
+          git config remote.origin.fetch $ref
+          git fetch -a
+          git checkout version-beta
+
+          git pull origin version-beta --no-rebase
+          vkey="version"
+          vsubstitute='s/version\(.*\):.//'
+          version=$(cat pubspec.yaml | grep "^$vkey. " | sed -e $vsubstitute)
+          echo $version
+
+          git checkout tags/$CM_TAG -b build/beta-version
+          git stash pop
+          sed -i '' "s/version: .*/version: ${version}/" pubspec.yaml
+      - name: Build IPA
+        script: |
+          flutter build ipa --release --export-options-plist /Users/builder/export_options.plist --flavor beta -t lib/main_beta.dart --dart-define USEREXPERIOR_KEY=11be1464-7ef9-41f6-8f1d-c41a862983ae
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+    publishing:
+      firebase:
+        firebase_token: $FIREBASE_TOKEN
+        ios:
+          app_id: $FIREBASE_BETA_IOS_APP_ID
+          groups:
+            - mobile-team
+            - qa-team
+            - design-team
+            - web-team
+            - product
+            - managers
+      email:
+        recipients:
+          - tech-mobile@yocket.in
+        notify:
+          success: true
+          failure: true
+
+  main-workflow:
+    name: iOS Main Workflow
+    << : *instance_mac_mini
+    integrations:
+      app_store_connect: codemagic-api-key-tech-mobile
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: '*-release*'
+          include: true
+      cancel_previous_builds: false
+    environment:
+      groups:
+        - firebase_credentials
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: in.yocket
+      << : *env_versions
+    cache:
+      cache_paths:
+        - $FLUTTER_ROOT/.pub-cache
+        - $HOME/Library/Developer/Xcode/DerivedData
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - *set_up_code_signing
+      - name: Version Update
+        script: |
+          #!/usr/bin/env bash
+          set -e # exit on first failed command
+          set -x # print all executed commands to the log
+
+          echo $CM_BRANCH
+          git status
+          git stash
+
+          git remote -v
+          git fetch origin
+          git fetch --all --tags --prune
+
+          ref="+refs/heads/version-main:refs/remotes/origin/version-main"
+          git config remote.origin.fetch $ref
+          git fetch -a
+          git checkout version-main
+
+          git pull origin version-main --no-rebase
+          vkey="version"
+          vsubstitute='s/version\(.*\):.//'
+          version=$(cat pubspec.yaml | grep "^$vkey. " | sed -e $vsubstitute)
+          echo $version
+
+          git checkout tags/$CM_TAG -b build/main-version
+          git stash pop
+          sed -i '' "s/version: .*/version: ${version}/" pubspec.yaml
+      - name: Build IPA
+        script: |
+          flutter build ipa --release --export-options-plist /Users/builder/export_options.plist --flavor prod -t lib/main.dart --dart-define USEREXPERIOR_KEY=88020b1d-d99b-4cc1-b641-84b47b60860a
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false
+      email:
+        recipients:
+          - tech-mobile@yocket.in
+        notify:
+          success: true
+          failure: true
